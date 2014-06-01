@@ -183,3 +183,30 @@ test('intersect two rectangles', function()
   end
   assert(actualCount == expectedCount)
 end)
+
+test('union two rectangles', function()
+  local rect1 = dirtle.RectangleShape.new(
+    dirtle.Coord.new(0, 0, 0),
+    dirtle.Coord.new(2, 2, 2))
+  local rect2 = dirtle.RectangleShape.new(
+    dirtle.Coord.new(-1, 1, 0),
+    dirtle.Coord.new(2, 2, 3))
+  local union = rect1:union(rect2)
+  local expectedCount = 0
+  local actualCount = 0
+  for c in rect1:coords_iter() do
+    expectedCount = expectedCount + 1
+    assert(union:contains(c))
+  end
+  for c in rect2:coords_iter() do
+    if not rect1:contains(c) then
+      expectedCount = expectedCount + 1
+    end
+    assert(union:contains(c))
+  end
+  for c in union:coords_iter() do
+    actualCount = actualCount + 1
+    assert(rect1:contains(c) or rect2:contains(c))
+  end
+  assert(actualCount == expectedCount, string.format('expected: %d actual: %d', expectedCount, actualCount))
+end)

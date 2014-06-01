@@ -67,7 +67,17 @@ function Coord:mul(s)
   return Coord.new(self.x * s, self.y * s, self.z * s)
 end
 
+-- Get the Manhattan distance between this coordinate and another.
+function Coord:manhattan(other)
+  return math.abs(self.x - other.x) +
+    math.abs(self.y - other.y) +
+    math.abs(self.z - other.z)
+end
+
 function Coord:equals(other)
+  if other == nil then
+    return false
+  end
   return self.x == other.x and self.y == other.y and self.z == other.z
 end
 
@@ -81,10 +91,10 @@ end
 -- Add two coordinates, generating a new coordinate representing their sum.
 
 -- Direction constants.
-NORTH = Coord.new( 1,  0,  0)
-EAST  = Coord.new( 0,  1,  0)
-SOUTH = Coord.new(-1,  0,  0)
-WEST  = Coord.new( 0, -1,  0)
+NORTH = Coord.new( 0,  1,  0)
+EAST  = Coord.new( 1,  0,  0)
+SOUTH = Coord.new( 0, -1,  0)
+WEST  = Coord.new(-1,  0,  0)
 UP    = Coord.new( 0,  0,  1)
 DOWN  = Coord.new( 0,  0, -1)
 
@@ -109,7 +119,7 @@ function Shape:minus(other)
 end
 
 function Shape:xor(other)
-  return XorShape.new(self, other)
+  return self:minus(other):union(other:minus(self))
 end
 
 function Shape:translate(coord)
@@ -126,12 +136,19 @@ function Shape:coords_iter()
   end
 end
 
+function Shape:coords_list()
+  local t = {}
+  for c in self:coords_iter() do
+    table.insert(t, c)
+  end
+end
+
 
 SphereShape = {}
 setmetatable(SphereShape, {__index = Shape})
 local _sphereShapeMt = {__index = SphereShape}
 
-function SphereShape.new(shape, origin, radius)
+function SphereShape.new(origin, radius)
   local o = {}
   setmetatable(o, _sphereShapeMt)
   o.origin = origin
@@ -150,7 +167,7 @@ end
 function SphereShape:coords_iter()
   -- It's a *little* inefficient to filter out stuff from the bounding box,
   -- but a sphere is about half a cube, so this is good enough.
-  local iter = self.shape:coords_iter()
+--  local iter = self.shape:coords_iter()
   local low = -1 * self.radius
   local high = self.radius
   local x = low
@@ -370,7 +387,15 @@ function UnionShape:coords_iter()
       if c == nil then
         iter = nil
       else
-        return c
+        local alreadySent = false
+        for j = 1, i - 1 do
+          if self.children[j]:contains(c) then
+            alreadySent = true
+          end
+        end
+        if not alreadySent then
+          return c
+        end
       end
     end
   end
@@ -441,13 +466,21 @@ end
 local _dirtle_pos = Coord.new(0, 0, 0)
 local _dirtle_facing = NORTH
 
+function getPosition()
+  return Coord.new(_dirtle_pos.x, _dirtle_pos.y, _dirtle_pos.z);
+end
+
+function getDirection()
+  return Coord.new(_dirtle_facing.x, _dirtle_facing.y, _dirtle_facing.z);
+end
+
 function turnLeft()
   turtle.turnLeft()
-  if _dirtle_facing.equals(NORTH) then
+  if _dirtle_facing:equals(NORTH) then
     _dirtle_facing = WEST
-  elseif _dirtle_facing.equals(WEST) then
+  elseif _dirtle_facing:equals(WEST) then
     _dirtle_facing = SOUTH
-  elseif _dirtle_facing.equals(SOUTH) then
+  elseif _dirtle_facing:equals(SOUTH) then
     _dirtle_facing = EAST
   else
     _dirtle_facing = NORTH
@@ -456,12 +489,12 @@ function turnLeft()
 end
 
 function turnRight()
-  turtle.turnRight()
-  if _dirtle_facing.equals(NORTH) then
+  turtle:turnRight()
+  if _dirtle_facing:equals(NORTH) then
     _dirtle_facing = EAST
-  elseif _dirtle_facing.equals(WEST) then
+  elseif _dirtle_facing:equals(WEST) then
     _dirtle_facing = NORTH
-  elseif _dirtle_facing.equals(SOUTH) then
+  elseif _dirtle_facing:equals(SOUTH) then
     _dirtle_facing = WEST
   else
     _dirtle_facing = SOUTH
@@ -470,25 +503,42 @@ function turnRight()
 end
 
 function face(direction)
-  if not direction.equals(NORTH)
-      or not direction.equals(EAST)
-      or not direction.equals(SOUTH)
-      or not direction.equals(WEST) then
+  if direction:equals(_dirtle_facing) then
+    return true
+  end
+  if not (direction:equals(NORTH)
+      or direction:equals(EAST)
+      or direction:equals(SOUTH)
+      or direction:equals(WEST)) then
     return false, "invalid direction, must be NORTH, SOUTH, EAST, or WEST"
   end
-  for i=1,4 do
-    if not _dirtle_facing.equals(direction) then
-      turnLeft()
-    end
+  -- We default to turning left. Not always optimal. Fix!
+  if direction:equals(NORTH) and _dirtle_facing:equals(WEST) then
+    turnRight()
   end
-  return _dirtle_facing.equals(direction)
+  if direction:equals(WEST) and _dirtle_facing:equals(SOUTH) then
+    turnRight()
+  end
+  if direction:equals(SOUTH) and _dirtle_facing:equals(EAST) then
+    turnRight()
+  end
+  if direction:equals(EAST) and _dirtle_facing:equals(NORTH) then
+    turnRight()
+  end
+  for i=1,4 do
+    if _dirtle_facing:equals(direction) then
+      return true
+    end
+    turnLeft()
+  end
+  return false
 end
 
 function forward(count)
   if count == nil then count = 1 end
   for i=1, count do
     if turtle.forward() then
-      _dirtle_pos = coord_add(_dirtle_pos, _dirtle_facing)
+      _dirtle_pos = _dirtle_pos:add(_dirtle_facing)
     else
       return i - 1
     end
@@ -498,10 +548,10 @@ end
 
 function back(count)
   if count == nil then count = 1 end
-  dir = coord_mul(_dirtle_facing, -1)
+  dir = _dirtle_facing:mul(-1)
   for i=1, count do
     if turtle.forward() then
-      _dirtle_pos = coord_add(_dirtle_pos, dir)
+      _dirtle_pos = _dirtle_pos:add(dir)
     else
       return i - 1
     end
@@ -513,7 +563,7 @@ function up(count)
   if count == nil then count = 1 end
   for i=1, count do
     if turtle.up() then
-      _dirtle_pos = coord_add(_dirtle_pos, UP)
+      _dirtle_pos = _dirtle_pos:add(UP)
     else
       return i - 1
     end
@@ -525,7 +575,7 @@ function down(count)
   if count == nil then count = 1 end
   for i=1, count do
     if turtle.up() then
-      _dirtle_pos = coord_add(_dirtle_pos, UP)
+      _dirtle_pos = _dirtle_pos:add(DOWN)
     else
       return i - 1
     end
@@ -547,34 +597,75 @@ function right(count)
   return s
 end
 
+function north(count)
+  face(NORTH)
+  if _dirtle_facing:equals(NORTH) then
+    forward(count)
+  else
+    error('failed to face NORTH')
+  end
+end
+
+function south(count)
+  face(SOUTH)
+  if _dirtle_facing:equals(SOUTH) then
+    forward(count)
+  else
+    error('failed to face SOUTH')
+  end
+end
+
+function east(count)
+  face(EAST)
+  if _dirtle_facing:equals(EAST) then
+    forward(count)
+  else
+    error('failed to face EAST')
+  end
+end
+
+function west(count)
+  face(WEST)
+  if _dirtle_facing:equals(WEST) then
+    forward(count)
+  else
+    error('failed to face WEST')
+  end
+end
+
 function goTo(coords)
   while not _dirtle_pos.equals(coords) do
-    progress = 0
-    diff = coord_sub(coords, _dirtle_pos)
+    local before = getPosition()
+    diff = coords:minus(before)
     -- Try to go in each direction you can
     if diff.x < 0 then
-      progress = progress + back(-1 * diff.x)
+      west(math.abs(diff.x))
     end
     if diff.x > 0 then
-      progress = progress + forward(diff.x)
+      east(diff.x)
     end
     if diff.y < 0 then
       -- -1 is left
-      progress = progress + left(-1 * diff.y)
+      south(math.abs(diff.y))
     end
     if diff.y > 0 then
-      progress = progress + right(diff.y)
+      north(diff.y)
     end
     if diff.z < 0 then
-      progress = progress + down(-1 * diff.z)
+      down(math.abs(diff.z))
     end
     if diff.z > 0 then
-      progress = progress + right(diff.z)
+      up(diff.z)
     end
 
-    -- If we made any progress this time, we've got different obstacles for
-    -- next time. Otherwise, we have the same obstacles and can't go on.
-    if progress == 0 then
+    -- If we made any progress this time, we've got different obstacles for next time.
+    -- Otherwise, we have the same obstacles and can't go on.
+    local old = before:manhattan(coords)
+    local new = getPosition():manhattan(coords)
+    if new == 0 then
+      return true
+    end
+    if new >= old then
       return false
     end
   end
@@ -588,42 +679,44 @@ end
 -- If you are building a solid object with this, prefer building from the
 -- bottom up.
 function placeBlock(coords)
+  print('trying to place block at ' .. tostring(coords))
   if turtle.getItemCount(turtle.getSelectedSlot()) == 0 then
     return false
   end
   if _dirtle_pos:equals(coords:plus(UP)) then
-    turtle.placeDown()
-    return true
+    print('placing block below')
+    return turtle.placeDown()
   end
   if _dirtle_pos:equals(coords:plus(DOWN)) then
-    turtle.placeUp()
-    return true
+    print('placing block above')
+    return turtle.placeUp()
   end
-  for dir in {EAST, NORTH, WEST, SOUTH} do
-    if _dirtle_pos:equals(coords:plus(dir)) then
+  for i, dir in pairs({EAST, NORTH, WEST, SOUTH}) do
+    if coords:equals(_dirtle_pos:plus(dir)) then
       -- Turn in place!
-      face(dir:times(-1))
+      print('turning in place')
+      face(dir)
+      print('placing block')
       return turtle.place()
     end
   end
   -- Okay, travel. Prefer above, then lateral, then below.
   if goTo(coords:plus(UP)) then
+    print('placing block below after moving')
     return turtle.placeDown()
   end
-  for dir in {EAST, NORTH, WEST, SOUTH} do
+  for i, dir in pairs({EAST, NORTH, WEST, SOUTH}) do
     if goTo(coords:plus(dir)) then
       face(dir:times(-1))
+      print('placing block after moving, laterally')
       return turtle.place()
     end
   end
   if goTo(coords:plus(DOWN)) then
+    print('placing block above after moving')
     return turtle.placeUp()
   end
   return false
-end
-
-function getPosition()
-  return Coord.new(_dirtle_pos.x, _dirtle_pos.y, _dirtle_pos.z);
 end
 
 function nextItem(indices)
@@ -636,9 +729,7 @@ function nextItem(indices)
     end
   end
   for i=1, #indices do
-    s = s + 1
     s = math.fmod(s, #indices) + 1
-    if s > 16 then s = 2 end
     if turtle.getItemCount(s) > 0 then
       turtle.select(s)
       return true
@@ -668,53 +759,16 @@ function build(shape, itemIndices)
   for c in shape:coords_iter() do
     if maxZ < c.z then maxZ = c.z end
     if not nextItem(itemIndices) then
+      print('out of items')
       -- Rise above the shenanigans
-      goUp(1 + maxZ - getPosition().z)
+      up(1 + maxZ - getPosition().z)
       goTo(dirtle.coord(0, 0, 0))
+      return
     end
-    placeBlock(c)
+    print('item slot: ' .. tostring(turtle.getSelectedSlot()))
+    if not placeBlock(c) then
+      print('failed to place block at ' .. tostring(c))
+    end
   end
 end
 
-function buildWithStochasticTorches(shape, torchIndices)
-  -- Input management! Sort out our torches and blocks
-  if torchIndices == nil then
-    torchIndices = {1}
-  end
-  torchIndices = table.sort(torchIndices)
-  local k = 1
-  local blockIndices = {}
-  for i=1, 16 do
-    if i == torchIndices[k] then
-      k = k + 1
-    else
-      table.insert(blockIndices, i)
-    end
-  end
-  if #blockIndices == 0 then
-    return 0
-  end
-
-  -- The 'crown' of the shape is any block with no block above it.
-  -- This is perhaps a bit too inclusive; a one-block gap will be a
-  -- candidate for getting a torch, even though it can't spawn a mob.
-  -- (Except maybe a chicken.)
-  -- We will put torches on some arbitrary subset of the crown.
-  local crown = shape:difference(shape:translate(Coord.new(0, 0, -1)))
-  local maxZ = 0
-  for c in shape:coords_iter() do
-    if maxZ < c.z then maxZ = c.z end
-    if not nextItem(itemIndices) then
-      -- Rise above the shenanigans
-      goUp(1 + maxZ - getPosition().z)
-      goTo(dirtle.coord(0, 0, 0))
-    end
-    placeBlock(c)
-    if crown:contains(c) and math.random(20) == 1 then
-      local s = turtle.getSelectedSlot()
-      nextItem(torchIndices)
-      placeBlock(c:plus(UP))
-      turtle.select(s)
-    end
-  end
-end
