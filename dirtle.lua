@@ -127,6 +127,167 @@ function Shape:coords_iter()
 end
 
 
+SphereShape = {}
+setmetatable(SphereShape, {__index = Shape})
+local _sphereShapeMt = {__index = SphereShape}
+
+function SphereShape.new(shape, origin, radius)
+  local o = {}
+  setmetatable(o, _sphereShapeMt)
+  o.origin = origin
+  o.radius = radius
+  return o
+end
+
+function SphereShape:contains(coord)
+  -- A sphere is the intersection of two perpendicular cylinders.
+  -- Or we can use x^2 + y^2 + z^2 = r^2.
+  local d = coord:minus(self.origin)
+  return math.pow(self.radius + 0.5, 2) >=
+      (math.pow(d.x, 2) + math.pow(d.y, 2) + math.pow(d.z, 2))
+end
+
+function SphereShape:coords_iter()
+  -- It's a *little* inefficient to filter out stuff from the bounding box,
+  -- but a sphere is about half a cube, so this is good enough.
+  local iter = self.shape:coords_iter()
+  local low = -1 * self.radius
+  local high = self.radius
+  local x = low
+  local y = low
+  local z = low
+  return function()
+    while x <= high or y <= high or z <= high do
+      local c = Coord.new(x, y, z)
+      x = x + 1
+      if x > high then
+        x = low
+        y = y + 1
+        if y > high then
+          y = low
+          z = z + 1
+        end
+      end
+      if self:contains(c) then
+        return c
+      end
+    end
+    return nil
+  end
+end
+
+
+--- A rectangular prism.
+RectangleShape = {}
+setmetatable(RectangleShape, {__index = Shape})
+local _rectangleShapeMt = {__index = RectangleShape}
+
+--- Create a RectangleShape.
+-- @param start The coordinates of one corner of the prism.
+-- @param finish The coordinates of the opposite corner of the prism.
+function RectangleShape.new(start, finish)
+  start, finish = normalizeCoordRange(start, finish)
+  local o = {}
+  setmetatable(o, _rectangleShapeMt)
+  o.start = start
+  o.finish = finish
+  return o
+end
+
+function RectangleShape:contains(coord)
+  return coord.x <= self.finish.x and
+         coord.x >= self.start.x and
+         coord.y <= self.finish.y and
+         coord.y >= self.start.y and
+         coord.z <= self.finish.z and
+         coord.z >= self.start.z
+end
+
+function RectangleShape:coords_iter()
+  local x = self.start.x
+  local y = self.start.y
+  local z = self.start.z
+  return function()
+    if z > self.finish.z then
+      return nil
+    end
+    local c = Coord.new(x, y, z)
+    x = x + 1
+    if x > self.finish.x then
+      x = self.start.x
+      y = y + 1
+      if y > self.finish.y then
+        y = self.start.y
+        z = z + 1
+      end
+    end
+    return c
+  end
+end
+
+
+--- A vertical cylinder.
+CylinderShape = {}
+setmetatable(CylinderShape, {__index = Shape})
+local _cylinderShapeMt = {__index = CylinderShape}
+
+--- Create a CylinderShape.
+-- @param origin The center point of the lowest level of the cylinder.
+-- @param radius The radius of the cylinder.
+-- @param height The height of the cylinder.
+function CylinderShape.new(origin, radius, height)
+  local o = {}
+  setmetatable(o, _cylinderShapeMt)
+  o.origin = origin
+  o.radius = radius
+  o.height = height
+  assert(o.origin ~= nil, 'nil origin')
+  return o
+end
+
+function CylinderShape:contains(coord)
+  if coord.z < self.origin.z or coord.z > self.origin.z + self.height then
+    return false
+  end
+  -- A circle's border is defined as x^2 + y^2 = r^2.
+  -- x^2 is always positive, so we can compare simply.
+  -- To make the circles look fuller and less pointy, we add 0.5 to the radius.
+  local offset = coord:minus(self.origin)
+  return math.pow(offset.x, 2) + math.pow(offset.y, 2) <= math.pow(0.5 + self.radius, 2)
+end
+
+function CylinderShape:coords_iter()
+  -- There are a few ways of doing this.
+  -- Here, we are going in a square from -r to +r in each direction
+  -- and filtering with contains().
+  local level = 0
+  local high = 1 + self.radius
+  local low = -1 * high
+  local x = low
+  local y = low
+  return function()
+    while true do
+      if level >= self.height then
+        return nil
+      end
+      local c = Coord.new(self.origin.x + x, self.origin.y + y, self.origin.z + level)
+      x = x + 1
+      if x > high then
+        x = low
+        y = y + 1
+        if y > high then
+          y = low
+          level = level + 1
+        end
+      end
+      if self:contains(c) then
+        return c
+      end
+    end
+  end
+end
+
+
 IntersectShape = {}
 setmetatable(IntersectShape, {__index = Shape})
 local _intersectShapeMt = {__index = IntersectShape}
@@ -248,109 +409,6 @@ function DifferenceShape:coords_iter()
 end
 
 
-RectangleShape = {}
-setmetatable(RectangleShape, {__index = Shape})
-local _rectangleShapeMt = {__index = RectangleShape}
-
-function RectangleShape.new(start, finish)
-  start, finish = normalizeCoordRange(start, finish)
-  local o = {}
-  setmetatable(o, _rectangleShapeMt)
-  o.start = start
-  o.finish = finish
-  return o
-end
-
-function RectangleShape:contains(coord)
-  return coord.x <= self.finish.x and
-         coord.x >= self.start.x and
-         coord.y <= self.finish.y and
-         coord.y >= self.start.y and
-         coord.z <= self.finish.z and
-         coord.z >= self.start.z
-end
-
-function RectangleShape:coords_iter()
-  local x = self.start.x
-  local y = self.start.y
-  local z = self.start.z
-  return function()
-    if z > self.finish.z then
-      return nil
-    end
-    local c = Coord.new(x, y, z)
-    x = x + 1
-    if x > self.finish.x then
-      x = self.start.x
-      y = y + 1
-      if y > self.finish.y then
-        y = self.start.y
-        z = z + 1
-      end
-    end
-    return c
-  end
-end
-
-
--- A vertical cylinder. The origin of the cylinder is the center of the lowest level.
-CylinderShape = {}
-setmetatable(CylinderShape, {__index = Shape})
-local _cylinderShapeMt = {__index = CylinderShape}
-
-function CylinderShape.new(origin, radius, height)
-  local o = {}
-  setmetatable(o, _cylinderShapeMt)
-  o.origin = origin
-  o.radius = radius
-  o.height = height
-  assert(o.origin ~= nil, 'nil origin')
-  return o
-end
-
-function CylinderShape:contains(coord)
-  if coord.z < self.origin.z or coord.z > self.origin.z + self.height then
-    return false
-  end
-  -- A circle's border is defined as x^2 + y^2 = r^2.
-  -- x^2 is always positive, so we can compare simply.
-  -- To make the circles look fuller and less pointy, we add 0.5 to the radius.
-  local offset = coord:minus(self.origin)
-  return math.pow(offset.x, 2) + math.pow(offset.y, 2) <= math.pow(0.5 + self.radius, 2)
-end
-
-function CylinderShape:coords_iter()
-  -- There are a few ways of doing this.
-  -- Here, we are going in a square from -r to +r in each direction
-  -- and filtering with contains().
-  local level = 0
-  local high = 1 + self.radius
-  local low = -1 * high
-  local x = low
-  local y = low
-  return function()
-    while true do
-      if level >= self.height then
-        return nil
-      end
-      local c = Coord.new(self.origin.x + x, self.origin.y + y, self.origin.z + level)
-      x = x + 1
-      if x > high then
-        x = low
-        y = y + 1
-        if y > high then
-          y = low
-          level = level + 1
-        end
-      end
-      if self:contains(c) then
-        return c
-      end
-    end
-  end
-end
-
-
 TranslateShape = {}
 setmetatable(TranslateShape, {__index = Shape})
 local _translateShapeMt = {__index = TranslateShape}
@@ -376,57 +434,6 @@ function TranslateShape:coords_iter()
     return c:plus(self.offset)
   end
 end
-
-
-SphereShape = {}
-setmetatable(SphereShape, {__index = Shape})
-local _sphereShapeMt = {__index = SphereShape}
-
-function SphereShape.new(shape, origin, radius)
-  local o = {}
-  setmetatable(o, _sphereShapeMt)
-  o.origin = origin
-  o.radius = radius
-  return o
-end
-
-function SphereShape:contains(coord)
-  -- A sphere is the intersection of two perpendicular cylinders.
-  -- Or we can use x^2 + y^2 + z^2 = r^2.
-  local d = coord:minus(self.origin)
-  return math.pow(self.radius + 0.5, 2) >=
-      (math.pow(d.x, 2) + math.pow(d.y, 2) + math.pow(d.z, 2))
-end
-
-function SphereShape:coords_iter()
-  -- It's a *little* inefficient to filter out stuff from the bounding box,
-  -- but a sphere is about half a cube, so this is good enough.
-  local iter = self.shape:coords_iter()
-  local low = -1 * self.radius
-  local high = self.radius
-  local x = low
-  local y = low
-  local z = low
-  return function()
-    while x <= high or y <= high or z <= high do
-      local c = Coord.new(x, y, z)
-      x = x + 1
-      if x > high then
-        x = low
-        y = y + 1
-        if y > high then
-          y = low
-          z = z + 1
-        end
-      end
-      if self:contains(c) then
-        return c
-      end
-    end
-    return nil
-  end
-end
-
 
 
 
