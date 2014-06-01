@@ -112,6 +112,10 @@ function Shape:xor(other)
   return XorShape.new(self, other)
 end
 
+function Shape:translate(coord)
+  return TranslateShape.new(self, coord)
+end
+
 function Shape:contains(coord)
   return false
 end
@@ -347,6 +351,86 @@ function CylinderShape:coords_iter()
 end
 
 
+TranslateShape = {}
+setmetatable(TranslateShape, {__index = Shape})
+local _translateShapeMt = {__index = TranslateShape}
+
+function TranslateShape.new(shape, offset)
+  local o = {}
+  setmetatable(o, _translateShapeMt)
+  o.shape = shape
+  o.offset = offset
+  return o
+end
+
+function TranslateShape:contains(coord)
+  -- shape:c is now at shape:c+offset
+  -- so inverse here
+  return self.shape:contains(coord:plus(offset))
+end
+
+function TranslateShape:coords_iter()
+  local iter = self.shape:coords_iter()
+  return function()
+    local c = iter()
+    return c:plus(self.offset)
+  end
+end
+
+
+SphereShape = {}
+setmetatable(SphereShape, {__index = Shape})
+local _sphereShapeMt = {__index = SphereShape}
+
+function SphereShape.new(shape, origin, radius)
+  local o = {}
+  setmetatable(o, _sphereShapeMt)
+  o.origin = origin
+  o.radius = radius
+  return o
+end
+
+function SphereShape:contains(coord)
+  -- A sphere is the intersection of two perpendicular cylinders.
+  -- Or we can use x^2 + y^2 + z^2 = r^2.
+  local d = coord:minus(self.origin)
+  return math.pow(self.radius + 0.5, 2) >=
+      (math.pow(d.x, 2) + math.pow(d.y, 2) + math.pow(d.z, 2))
+end
+
+function SphereShape:coords_iter()
+  -- It's a *little* inefficient to filter out stuff from the bounding box,
+  -- but a sphere is about half a cube, so this is good enough.
+  local iter = self.shape:coords_iter()
+  local low = -1 * self.radius
+  local high = self.radius
+  local x = low
+  local y = low
+  local z = low
+  return function()
+    while x <= high or y <= high or z <= high do
+      local c = Coord.new(x, y, z)
+      x = x + 1
+      if x > high then
+        x = low
+        y = y + 1
+        if y > high then
+          y = low
+          z = z + 1
+        end
+      end
+      if self:contains(c) then
+        return c
+      end
+    end
+    return nil
+  end
+end
+
+
+
+
+
 local _dirtle_pos = Coord.new(0, 0, 0)
 local _dirtle_facing = NORTH
 
@@ -535,10 +619,18 @@ function getPosition()
   return Coord.new(_dirtle_pos.x, _dirtle_pos.y, _dirtle_pos.z);
 end
 
-function nextItem()
-  local s = turtle.getSelectedSlot()
-  for i=1, 16 do
+function nextItem(indices)
+  indices = indices or {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
+  local s = 1
+  for i=1, #indices do
+    if indices[i] == turtle.getSelectedSlot() then
+      s = i
+      break
+    end
+  end
+  for i=1, #indices do
     s = s + 1
+    s = math.fmod(s, #indices) + 1
     if s > 16 then s = 2 end
     if turtle.getItemCount(s) > 0 then
       turtle.select(s)
@@ -561,131 +653,61 @@ function normalizeCoordRange(start, finish)
 end
 
 
-function build(shape)
-end
-
--- 
-function buildSolidBlock(start, finish, afterPlace)
-  start, finish = normalizeCoordRange(start, finish)
-  local size = finish:minus(start)
-  turtle.select(1)
-  goTo(opts.start:plus(dirtle.UP))
-  local l = size.x
-  local w = size.y
-  local h = size.z
-  local block = 0
-  for x=1, l do
-    for y=1, w do
-      for z=1, h do
-        goTo(dirtle.coord(x, y, z + 1))
-        if not nextItem() then
-          -- So as not to strain the pathfinding much, first go up above the project.
-          -- Then head home.
-          goTo(dirtle.coord(x, y, h + 2))
-          goTo(dirtle.coord(0, 0, 0))
-        end
-        placeDown()
-        if afterPlace ~= nil then
-          afterPlace()
-        end
-        block = block + 1
-      end
+-- Build the given shape in the world.
+-- The optional itemIndices array indicates which item slots to pull blocks
+-- from. It defaults to all slots.
+function build(shape, itemIndices)
+  local maxZ = 0
+  for c in shape:coords_iter() do
+    if maxZ < c.z then maxZ = c.z end
+    if not nextItem(itemIndices) then
+      -- Rise above the shenanigans
+      goUp(1 + maxZ - getPosition().z)
+      goTo(dirtle.coord(0, 0, 0))
     end
+    placeBlock(c)
   end
 end
 
-function buildHollowBlock(start, finish, afterPlace)
-  start, finish = normalizeCoordRange(start, finish)
-  -- Build the lower platform. Leave the margin alone -- one primary usecase of afterPlace is to
-  -- add torches, and that doesn't work so well otherwise.
-  buildSolidBlock(
-    Coord.new(start.x + 1, start.y + 1, start.z),
-    Coord.new(finish.x - 1, finish.y - 1, start.z),
-    afterPlace)
-  -- Same for the top
-  buildSolidBlock(
-    Coord.new(start.x + 1, start.y + 1, finish.z),
-    Coord.new(finish.x - 1, finish.y - 1, finish.z),
-    afterPlace)
-
-  -- Now build the left and right walls
-  buildSolidBlock(
-    Coord.new(start.x, start.y, start.z),
-    Coord.new(start.x, finish.y, finish.z),
-    afterPlace)
-  buildSolidBlock(
-    Coord.new(finish.x, start.y, start.z),
-    Coord.new(finish.x, finish.y, finish.z),
-    afterPlace)
-
-  -- Now the front and back. Here, the corners have already been filled.
-  -- So we have to be careful not to fill those spaces.
-  buildSolidBlock(
-    Coord.new(start.x + 1, start.y, start.z),
-    Coord.new(finish.x - 1, start.y, finish.z),
-    afterPlace)
-  buildSolidBlock(
-    Coord.new(start.x + 1, finish.y, start.z),
-    Coord.new(finish.x - 1, finish.y, finish.z),
-    afterPlace)
-end
-
--- Create a hollow block at the given location with torches inside and out.
--- It's assumed that the turtle has torches in its inventory at slot 1.
--- It will attempt to place a torch at every tenth block on average --
--- specifically, on alternating rows, it will place a torch every five blocks.
--- This is the minimum to ensure safety during the build, but you should be able to remove
--- alternating rows at the end.
-function buildHollowBlockWithTorches(start, finish)
-  start, finish = normalizeCoordRange(start, finish)
-  local count = 0
-  -- We need a torch every 13-ish blocks in the end.
-  -- While building, we should err on the side of caution. Turtles aren't speed demons. 
-  -- Specifically, we want to add Steiner lights so that we don't have shadows while building.
-  -- If we just put down a torch every 13th block, we will end up with shadows temporarily. About
-  -- half the time, the turtle will be in spawning territory.
-  --
-  -- Specifically, in the middle of building, we'll see a light like this:
-  --
-  -- 89ABCD=DCBA9889ABCD=DCBA98
-  --  89ABCDCBA98  89ABCDCBA98
-  --   89ABCBA98    89ABCBA98
-  --    89ABA98        *[empty...]
-  --
-  -- The * is where the turtle is now, the = is where there's a torch, and the unmarked areas allow
-  -- mobs to spawn.
-  --
-  -- If we put torches closer together (every 9th block), we reduce this issue:
-  -- ABCD=DCBAABCD=DCBA98
-  -- 9ABCDCBA99ABCDCBA98
-  -- 89ABCBA9889ABCBA98
-  --  89ABA98    *[empty...]
-  --
-  -- But this means we need to put down torches every third row. We could squish them slightly
-  -- closer together; 9/3 and 7/4 are options, as is 11/1.
-  -- We're also a bit unsafe during construction.
-  -- 7/1 is the minimum perfectly safe option. 5/2 also works and is slightly lighter on torches.
-  function willBuildThisSpot(lastBuiltAt)
-    if lastBuiltAt.z == finish.z then
-      return false
-    end
-    if lastBuiltAt.z == start.z then
-      if lastBuiltAt.x == start.x or lastBuiltAt.x == finish.x then
-        return true
-      end
-      if lastBuiltAt.y == start.y or lastBuiltAt.y == finish.y then
-        return true
-      end
-    end
-    return false
+function buildWithStochasticTorches(shape, torchIndices)
+  -- Input management! Sort out our torches and blocks
+  if torchIndices == nil then
+    torchIndices = {1}
   end
-  function placeTorch(lastBuiltAt)
-    local s = turtle.getSelectedSlot()
-    turtle.select(1)
-    placeBlock(lastBuiltAt:plus(UP))
-    turtle.select(s)
+  torchIndices = table.sort(torchIndices)
+  local k = 1
+  local blockIndices = {}
+  for i=1, 16 do
+    if i == torchIndices[k] then
+      k = k + 1
+    else
+      table.insert(blockIndices, i)
+    end
   end
-  function maybeBuildTorch(lastBuiltAt)
+  if #blockIndices == 0 then
+    return 0
+  end
 
+  -- The 'crown' of the shape is any block with no block above it.
+  -- This is perhaps a bit too inclusive; a one-block gap will be a
+  -- candidate for getting a torch, even though it can't spawn a mob.
+  -- (Except maybe a chicken.)
+  -- We will put torches on some arbitrary subset of the crown.
+  local crown = shape:difference(shape:translate(Coord.new(0, 0, -1)))
+  local maxZ = 0
+  for c in shape:coords_iter() do
+    if maxZ < c.z then maxZ = c.z end
+    if not nextItem(itemIndices) then
+      -- Rise above the shenanigans
+      goUp(1 + maxZ - getPosition().z)
+      goTo(dirtle.coord(0, 0, 0))
+    end
+    placeBlock(c)
+    if crown:contains(c) and math.random(20) == 1 then
+      local s = turtle.getSelectedSlot()
+      nextItem(torchIndices)
+      placeBlock(c:plus(UP))
+      turtle.select(s)
+    end
   end
 end
