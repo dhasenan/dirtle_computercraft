@@ -27,6 +27,7 @@
 -- * Block placing primitives (put a block at point P)
 -- * Higher level block placing stuff (list of coords? ranges?)
 -- * Client/server thing with GPS to record obstacles
+-- * Record state so we can restart later
 
 
 -- A coordinate is a 3-tuple representing a point in space.
@@ -41,26 +42,20 @@ local _coordMt = {
 function Coord.new(x, y, z)
   local o = {}
   setmetatable(o, _coordMt)
+  -- TODO should I only allow integer coordinates? That might make trouble for spheres...
   o.x = x
   o.y = y
   o.z = z
   return o
 end
 
-function Coord:add(other)
+-- Add two coordinates together.
+function Coord:plus(other)
   return Coord.new(self.x + other.x, self.y + other.y, self.z + other.z)
 end
 
-function Coord:plus(other)
-  return self:add(other)
-end
-
-function Coord:sub(other)
-  return Coord.new(self.x - other.x, self.y - other.y, self.z - other.z)
-end
-
 function Coord:minus(other)
-  return self:sub(other)
+  return Coord.new(self.x - other.x, self.y - other.y, self.z - other.z)
 end
 
 function Coord:mul(s)
@@ -538,7 +533,7 @@ function forward(count)
   if count == nil then count = 1 end
   for i=1, count do
     if turtle.forward() then
-      _dirtle_pos = _dirtle_pos:add(_dirtle_facing)
+      _dirtle_pos = _dirtle_pos:plus(_dirtle_facing)
     else
       return i - 1
     end
@@ -551,7 +546,7 @@ function back(count)
   dir = _dirtle_facing:mul(-1)
   for i=1, count do
     if turtle.forward() then
-      _dirtle_pos = _dirtle_pos:add(dir)
+      _dirtle_pos = _dirtle_pos:plus(dir)
     else
       return i - 1
     end
@@ -563,7 +558,7 @@ function up(count)
   if count == nil then count = 1 end
   for i=1, count do
     if turtle.up() then
-      _dirtle_pos = _dirtle_pos:add(UP)
+      _dirtle_pos = _dirtle_pos:plus(UP)
     else
       return i - 1
     end
@@ -575,7 +570,7 @@ function down(count)
   if count == nil then count = 1 end
   for i=1, count do
     if turtle.up() then
-      _dirtle_pos = _dirtle_pos:add(DOWN)
+      _dirtle_pos = _dirtle_pos:plus(DOWN)
     else
       return i - 1
     end
@@ -634,32 +629,40 @@ function west(count)
 end
 
 function goTo(coords)
+  coords = coords:round()
   while not _dirtle_pos.equals(coords) do
     local before = getPosition()
     diff = coords:minus(before)
     -- Try to go in each direction you can
     if diff.x < 0 then
+      print('going west by ' .. tostring(math.abs(diff.x)))
       west(math.abs(diff.x))
     end
     if diff.x > 0 then
+      print('going east by ' .. tostring(math.abs(diff.x)))
       east(diff.x)
     end
     if diff.y < 0 then
       -- -1 is left
+      print('going south by ' .. tostring(math.abs(diff.y)))
       south(math.abs(diff.y))
     end
     if diff.y > 0 then
+      print('going north by ' .. tostring(math.abs(diff.y)))
       north(diff.y)
     end
     if diff.z < 0 then
+      print('going down by ' .. tostring(math.abs(diff.y)))
       down(math.abs(diff.z))
     end
     if diff.z > 0 then
+      print('going up by ' .. tostring(math.abs(diff.y)))
       up(diff.z)
     end
 
     -- If we made any progress this time, we've got different obstacles for next time.
     -- Otherwise, we have the same obstacles and can't go on.
+    print('got to ' .. tostring(getPosition()))
     local old = before:manhattan(coords)
     local new = getPosition():manhattan(coords)
     if new == 0 then
@@ -679,6 +682,7 @@ end
 -- If you are building a solid object with this, prefer building from the
 -- bottom up.
 function placeBlock(coords)
+  coords = coords:round()
   print('trying to place block at ' .. tostring(coords))
   if turtle.getItemCount(turtle.getSelectedSlot()) == 0 then
     return false
@@ -701,17 +705,20 @@ function placeBlock(coords)
     end
   end
   -- Okay, travel. Prefer above, then lateral, then below.
+  print('trying to go to ' .. tostring(coords:plus(UP)))
   if goTo(coords:plus(UP)) then
     print('placing block below after moving')
     return turtle.placeDown()
   end
   for i, dir in pairs({EAST, NORTH, WEST, SOUTH}) do
+    print('trying to go to ' .. tostring(coords:plus(dir)))
     if goTo(coords:plus(dir)) then
       face(dir:times(-1))
       print('placing block after moving, laterally')
       return turtle.place()
     end
   end
+  print('trying to go to ' .. tostring(coords:plus(DOWN)))
   if goTo(coords:plus(DOWN)) then
     print('placing block above after moving')
     return turtle.placeUp()
@@ -757,6 +764,7 @@ end
 function build(shape, itemIndices)
   local maxZ = 0
   for c in shape:coords_iter() do
+    --[[
     if maxZ < c.z then maxZ = c.z end
     if not nextItem(itemIndices) then
       print('out of items')
@@ -765,6 +773,7 @@ function build(shape, itemIndices)
       goTo(dirtle.coord(0, 0, 0))
       return
     end
+    --]]
     print('item slot: ' .. tostring(turtle.getSelectedSlot()))
     if not placeBlock(c) then
       print('failed to place block at ' .. tostring(c))
