@@ -4,6 +4,52 @@ require('dirtle')
 -- This is a hack to make the API work as we want.
 local dirtle = _G
 
+local turtle = {}
+turtle.x = 0
+turtle.y = 0
+turtle.z = 0
+turtle.facing = 0
+
+turtle.up = function()
+  turtle.z += 1
+end
+
+turtle.down = function()
+  turtle.z -= 1
+end
+
+local qcirc = math.pi / 2.0
+turtle.turnLeft = function()
+  turtle.facing -= qcirc
+end
+
+turtle.turnRight = function()
+  turtle.facing += qcirc
+end
+
+turtle.forward = function()
+  turtle.y += math.cos(turtle.facing)
+  turtle.x += math.sin(turtle.facing)
+end
+
+turtle.left = function()
+  turtle.y += math.cos(turtle.facing - qcirc)
+  turtle.x += math.sin(turtle.facing - qcirc)
+end
+
+turtle.right = function()
+  turtle.y += math.cos(turtle.facing + qcirc)
+  turtle.x += math.sin(turtle.facing + qcirc)
+end
+
+turtle.back = function()
+  turtle.y -= math.cos(turtle.facing)
+  turtle.x -= math.sin(turtle.facing)
+end
+
+turtle.placeDown = function()
+end
+
 
 function test(name, fn)
   io.write('test ' .. name .. '...')
@@ -19,14 +65,14 @@ end)
 test('coord addition', function()
   local c1 = dirtle.Coord.new(3, 8, -3)
   local c2 = dirtle.Coord.new(4, -1, -1)
-  local sum = c1:add(c2)
+  local sum = c1:plus(c2)
   assert(sum:equals(dirtle.Coord.new(7, 7, -4)))
 end)
 
 test('coord subtraction', function()
   local c1 = dirtle.Coord.new(3, 8, -3)
   local c2 = dirtle.Coord.new(4, -1, -1)
-  local diff = c1:sub(c2)
+  local diff = c1:minus(c2)
   assert(diff:equals(dirtle.Coord.new(-1, 9, -2)))
 end)
 
@@ -236,4 +282,17 @@ test('union circle and rod', function()
     assert(rect1:contains(c) or rect2:contains(c))
   end
   assert(actualCount == expectedCount, string.format('expected: %d actual: %d', expectedCount, actualCount))
+end)
+
+test('sphere contents', function()
+  local sphere = dirtle.SphereShape.new(dirtle.Coord.new(0, 0, 0), 1)
+  for c in sphere:coords_iter() do
+    assert(sphere:contains(c))
+    assert(-1 <= c.x)
+    assert(-1 <= c.y)
+    assert(-1 <= c.z)
+    assert(1 >= c.x)
+    assert(1 >= c.y)
+    assert(1 >= c.z)
+  end
 end)

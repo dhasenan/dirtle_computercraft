@@ -69,6 +69,10 @@ function Coord:manhattan(other)
     math.abs(self.z - other.z)
 end
 
+function Coord:distance(other)
+  return math.sqrt(self.x * self.x + self.y * self.y + self.z * self.z)
+end
+
 function Coord:equals(other)
   if other == nil then
     return false
@@ -169,7 +173,7 @@ function SphereShape:coords_iter()
   local y = low
   local z = low
   return function()
-    while x <= high or y <= high or z <= high do
+    while z <= high do
       local c = Coord.new(x, y, z)
       x = x + 1
       if x > high then
@@ -298,6 +302,68 @@ function CylinderShape:coords_iter()
     end
   end
 end
+
+
+TorusShape = {}
+setmetatable(TorusShape, {__index = Shape})
+local _torusShapeMt = {__index = TorusShape}
+
+function TorusShape.new(origin, majorRadius, minorRadius)
+  local o = {}
+  setmetatable(o, _torusShapeMt)
+  o.origin = origin
+  o.majorRadius = majorRadius
+  o.minorRadius = minorRadius
+  return o
+end
+
+function TorusShape:contains(coord)
+  -- A torus is essentially a sphere rolled around in a circle, or a series of overlapping spheres.
+  -- If we can locate the right sphere, we can just see if that sphere contains this coordinate.
+  -- We know its origin is on the center ring of the torus. It's on the plane of the torus (duh)
+  -- and in line with the projection of this coordinate on that plane.
+  -- So we just project the coord onto the torus's plane (z=0)...
+  local shifted = coord:minus(origin)
+  local relative = Coord.new(shifted.x, shifted.y, 0)
+  -- Intercept it with the majorRadius ring...
+  -- soh cah toa; I have sin and need to get ratio
+  local x = self.majorRadius * math.asin(shifted.x / (0.0 + shifted.y))
+  local y = self.majorRadius * math.acos(shifted.x / (0.0 + shifted.y))
+  local sphereCenter = Coord.new(x, y, 0)
+  -- And see if the distance from that point to the coordinate is small enough
+  return sphereCenter:distance(shifted) <= minorRadius
+end
+
+function TorusShape:coords_iter()
+  -- Simple and stupid way.
+  local horizontalBound = self.majorRadius + self.minorRadius
+  local verticalBound = self.minorRadius
+  local x = -horizontalBound
+  local y = -horizontalBound
+  local z = -verticalBound
+
+  return function()
+    while z <= verticalBound do
+      x += 1
+      if x > horizontalBound then
+        x = -horizontalBound
+        y += 1
+        if y > horizontalBound then
+          y = -horizontalBound
+          z += 1
+          if z > verticalBound then
+            return nil
+          end
+        end
+      end
+      local c = Coord.new(x, y, z)
+      if self:contains(c) then
+        return c
+      end
+    end
+  end
+end
+
 
 
 IntersectShape = {}
@@ -710,7 +776,7 @@ function placeBlock(coords)
     print('placing block below after moving')
     return turtle.placeDown()
   end
-  for i, dir in pairs({EAST, NORTH, WEST, SOUTH}) do
+  for dir in {EAST, NORTH, WEST, SOUTH} do
     print('trying to go to ' .. tostring(coords:plus(dir)))
     if goTo(coords:plus(dir)) then
       face(dir:times(-1))
@@ -764,20 +830,13 @@ end
 function build(shape, itemIndices)
   local maxZ = 0
   for c in shape:coords_iter() do
-    --[[
-    if maxZ < c.z then maxZ = c.z end
-    if not nextItem(itemIndices) then
-      print('out of items')
-      -- Rise above the shenanigans
-      up(1 + maxZ - getPosition().z)
-      goTo(dirtle.coord(0, 0, 0))
-      return
-    end
-    --]]
+    nextItem(itemIndices)
     print('item slot: ' .. tostring(turtle.getSelectedSlot()))
     if not placeBlock(c) then
       print('failed to place block at ' .. tostring(c))
     end
   end
+  up()
+  goTo(dirtle.coord(0, 0, 0))
 end
 
