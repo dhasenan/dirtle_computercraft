@@ -70,7 +70,8 @@ function Coord:manhattan(other)
 end
 
 function Coord:distance(other)
-  return math.sqrt(self.x * self.x + self.y * self.y + self.z * self.z)
+  local diff = self:minus(other)
+  return math.sqrt(diff.x * diff.x + diff.y * diff.y + diff.z * diff.z)
 end
 
 function Coord:equals(other)
@@ -143,6 +144,7 @@ function Shape:coords_list()
 end
 
 
+-- A sphere.
 SphereShape = {}
 setmetatable(SphereShape, {__index = Shape})
 local _sphereShapeMt = {__index = SphereShape}
@@ -304,10 +306,27 @@ function CylinderShape:coords_iter()
 end
 
 
+-- A torus is a donut shape. If you take a circle and roll a sphere around it, everywhere the sphere
+-- touched is a torus. It's defined by three values. The _center_ is the middle of the center hole.
+-- The _major radius_ is the distance from the center to the middle of the ring. The _minor radius_
+-- is the distance from the middle of the ring to the outer edge.
+--
+-- In this diagram of the center line of a torus:
+-- |===*===|....O....|===*===|
+--
+-- The '.' signs represent points with no blocks. The 'O' is the center. The |====*====| part is
+-- where the blocks go, with the '*' being the middle and the '|' being the edge. This is a major
+-- radius of 'O....|===*' and a minor radius of '*===|'.
+--
+-- Alternatively, let's say you have a super-thin donut with a huge thick icing crust. The icing's
+-- thickness is equal to the minor radius. The radius of the doughy ring is the major radius. The
+-- radius of the hole is smaller than the major radius -- it's the difference between the major and
+-- minor radiuses.
 TorusShape = {}
 setmetatable(TorusShape, {__index = Shape})
 local _torusShapeMt = {__index = TorusShape}
 
+-- Create a new torus shape with the given origin, major radius, and minor radius.
 function TorusShape.new(origin, majorRadius, minorRadius)
   local o = {}
   setmetatable(o, _torusShapeMt)
@@ -323,19 +342,22 @@ function TorusShape:contains(coord)
   -- We know its origin is on the center ring of the torus. It's on the plane of the torus (duh)
   -- and in line with the projection of this coordinate on that plane.
   -- So we just project the coord onto the torus's plane (z=0)...
-  local shifted = coord:minus(origin)
+  local shifted = coord:minus(self.origin)
   local relative = Coord.new(shifted.x, shifted.y, 0)
   -- Intercept it with the majorRadius ring...
-  -- soh cah toa; I have sin and need to get ratio
-  local x = self.majorRadius * math.asin(shifted.x / (0.0 + shifted.y))
-  local y = self.majorRadius * math.acos(shifted.x / (0.0 + shifted.y))
-  local sphereCenter = Coord.new(x, y, 0)
+  -- I have the current thing and need to scale it back. Its length is sqrt(x**2 + y**2), so I have
+  -- to divide each coord part...
+  local relLength = math.sqrt(shifted.x^2 + shifted.y^2)
+  local ratio = self.majorRadius / relLength
+  local sphereCenter = Coord.new(relative.x * ratio, relative.y * ratio, 0)
   -- And see if the distance from that point to the coordinate is small enough
-  return sphereCenter:distance(shifted) <= minorRadius
+  local distance = sphereCenter:distance(shifted)
+  return distance <= self.minorRadius + 0.5
 end
 
 function TorusShape:coords_iter()
   -- Simple and stupid way.
+  -- This is pretty expensive.
   local horizontalBound = self.majorRadius + self.minorRadius
   local verticalBound = self.minorRadius
   local x = -horizontalBound
@@ -344,13 +366,13 @@ function TorusShape:coords_iter()
 
   return function()
     while z <= verticalBound do
-      x += 1
+      x = x + 1
       if x > horizontalBound then
         x = -horizontalBound
-        y += 1
+        y = y + 1
         if y > horizontalBound then
           y = -horizontalBound
-          z += 1
+          z = z + 1
           if z > verticalBound then
             return nil
           end
@@ -361,11 +383,16 @@ function TorusShape:coords_iter()
         return c
       end
     end
+    return nil
   end
 end
 
 
 
+-- An IntersectShape is the intersection between a number of shapes. The intersection of a sphere
+-- and a rectangular prism is a dome or a rectangular prism with a rounded top. You can intersect
+-- any number of shapes (at least one, ideally).
+-- A sphere is the intersection between two perpendicular cylinders.
 IntersectShape = {}
 setmetatable(IntersectShape, {__index = Shape})
 local _intersectShapeMt = {__index = IntersectShape}
@@ -407,6 +434,9 @@ function IntersectShape:coords_iter()
 end
 
 
+-- A union shape is the union of several shapes. It's the set of points contained in at least one of
+-- its component (child) shapes. Use this to draw several shapes in one go, especially if they
+-- intersect.
 UnionShape = {}
 setmetatable(UnionShape, {__index = Shape})
 local _unionShapeMt = {__index = UnionShape}
@@ -463,6 +493,9 @@ function UnionShape:coords_iter()
 end
 
 
+-- A DifferenceShape is the difference between one shape and another. It's all points belonging to
+-- the first shape not belonging to the second. You can use this to create hollow shapes -- an empty
+-- sphere is just a sphere minus a slightly smaller sphere, for instance.
 DifferenceShape = {}
 setmetatable(DifferenceShape, {__index = Shape})
 local _differenceShapeMt = {__index = DifferenceShape}
@@ -495,6 +528,8 @@ function DifferenceShape:coords_iter()
 end
 
 
+-- A TranslateShape is a shape that's been moved. You could simply provide different coordinates in
+-- the first place, but this might be more convenient sometimes.
 TranslateShape = {}
 setmetatable(TranslateShape, {__index = Shape})
 local _translateShapeMt = {__index = TranslateShape}
@@ -837,6 +872,5 @@ function build(shape, itemIndices)
     end
   end
   up()
-  goTo(dirtle.coord(0, 0, 0))
+  goTo(dirtle.Coord.new(0, 0, 0))
 end
-

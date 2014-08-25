@@ -4,6 +4,49 @@ require('dirtle')
 -- This is a hack to make the API work as we want.
 local dirtle = _G
 
+
+-- For debugging: print out a shape line by line, from the bottom up.
+function plot(shape)
+  local min = dirtle.Coord.new(0, 0, 0)
+  local max = dirtle.Coord.new(0, 0, 0)
+  print()
+  for c in shape:coords_iter() do
+    if c.x > max.x then
+      max.x = c.x
+    end
+    if c.y > max.y then
+      max.y = c.y
+    end
+    if c.z > max.z then
+      max.z = c.z
+    end
+    if c.x < min.x then
+      min.x = c.x
+    end
+    if c.y < min.y then
+      min.y = c.y
+    end
+    if c.z < min.z then
+      min.z = c.z
+    end
+  end
+
+  for z = min.z, max.z do
+    for y = min.y, max.y do
+      local line = ""
+      for x = min.x, max.x do
+        if shape:contains(dirtle.Coord.new(x, y, z)) then
+          line = line .. "x"
+        else
+          line = line .. " "
+        end
+      end
+      print(line)
+    end
+  end
+end
+
+--[[
 local turtle = {}
 turtle.x = 0
 turtle.y = 0
@@ -11,44 +54,59 @@ turtle.z = 0
 turtle.facing = 0
 
 turtle.up = function()
-  turtle.z += 1
+  turtle.z = turtle.z + 1
 end
 
 turtle.down = function()
-  turtle.z -= 1
+  turtle.z = turtle.z - 1
 end
 
 local qcirc = math.pi / 2.0
 turtle.turnLeft = function()
-  turtle.facing -= qcirc
+  turtle.facing = turtle.facing - qcirc
 end
 
 turtle.turnRight = function()
-  turtle.facing += qcirc
+  turtle.facing = turtle.facing + qcirc
 end
 
 turtle.forward = function()
-  turtle.y += math.cos(turtle.facing)
-  turtle.x += math.sin(turtle.facing)
+  turtle.y = turtle.y + math.cos(turtle.facing)
+  turtle.x = turtle.x + math.sin(turtle.facing)
 end
 
 turtle.left = function()
-  turtle.y += math.cos(turtle.facing - qcirc)
-  turtle.x += math.sin(turtle.facing - qcirc)
+  turtle.y = turtle.y + math.cos(turtle.facing - qcirc)
+  turtle.x = turtle.x + math.sin(turtle.facing - qcirc)
 end
 
 turtle.right = function()
-  turtle.y += math.cos(turtle.facing + qcirc)
-  turtle.x += math.sin(turtle.facing + qcirc)
+  turtle.y = turtle.y + math.cos(turtle.facing + qcirc)
+  turtle.x = turtle.x + math.sin(turtle.facing + qcirc)
 end
 
 turtle.back = function()
-  turtle.y -= math.cos(turtle.facing)
-  turtle.x -= math.sin(turtle.facing)
+  turtle.y = turtle.y - math.cos(turtle.facing)
+  turtle.x = turtle.x - math.sin(turtle.facing)
 end
 
 turtle.placeDown = function()
+  local layerBelow = turtle.blocks[turtle.z - 1]
+  if layerBelow == nil then
+    layerBelow = {}
+    turtle.blocks[turtle.z - 1] = {}
+  end
+  local rank = layerBelow[turtle.x]
+  if rank == nil then
+    rank = {}
+    layerBelow[turtle.x] = {}
+  end
+  local cell = rank[turtle.y]
+  if cell ~= nil then
+    return false
+  end
 end
+--]]
 
 
 function test(name, fn)
@@ -295,4 +353,41 @@ test('sphere contents', function()
     assert(1 >= c.y)
     assert(1 >= c.z)
   end
+end)
+
+test('coord distance', function()
+  local p1 = dirtle.Coord.new(4, 1, 7)
+  local p2 = dirtle.Coord.new(6, 12, 1)
+  assert(math.abs(p1:distance(p2) - 12.6886) <= 0.01)
+  assert(math.abs(p2:distance(p1) - 12.6886) <= 0.01)
+  assert(p1:distance(p2) >= 0)
+  assert(p2:distance(p1) >= 0)
+end)
+
+test('torus contents', function()
+  local origin = dirtle.Coord.new(0, 0, 0)
+  local torus = dirtle.TorusShape.new(origin, 20, 8)
+  plot(dirtle.TorusShape.new(dirtle.Coord.new(0, 0, 0.5), 5.5, 0.5))
+  local i = 0
+  assert(torus:contains(dirtle.Coord.new(0, 20, 0)))
+  assert(torus:contains(dirtle.Coord.new(0, 28, 0)))
+  assert(torus:contains(dirtle.Coord.new(0, 20, 8)))
+  for c in torus:coords_iter() do
+    i = i + 1
+    assert(torus:contains(c))
+    assert(-28 <= c.x)
+    assert(-28 <= c.y)
+    assert(-8 <= c.z)
+    assert(28 >= c.x)
+    assert(28 >= c.y)
+    assert(8 >= c.z)
+  end
+  -- Sanity checks: make sure we've got some blocks here.
+  assert(i > 50)
+  assert(i < 56 * 56 * 16)
+  -- Area of a torus is pi r^2 * 2 pi R, where R is the major radius.
+  -- Give a bit of extra volume because of inexact (pretending minor radius is slightly more than
+  -- half a block larger). The exact value used was determined experimentally.
+  assert(i >= math.ceil(2 * math.pi * 20 * math.pi * 64))
+  assert(i <= math.ceil(2 * math.pi * 20 * math.pi * 72.5))
 end)
